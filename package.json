@@ -1,0 +1,60 @@
+{
+  "name": "echopersona",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "EchoPersona - AI persona reconstruction & voice chat platform",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node --no-warnings src/server.js",
+    "dev": "node --no-warnings --watch src/server.js",
+    "migrate": "node --no-warnings scripts/migrate.js",
+    "vendor": "node --no-warnings scripts/build-vendor.mjs",
+    "postinstall": "node --no-warnings scripts/build-vendor.mjs",
+    "test": "node --no-warnings --import ./tests/setup-env.mjs --test tests/*.test.js",
+    "smoke": "node --no-warnings scripts/smoke.js",
+    "verify:voice": "node --no-warnings scripts/verify-voice.mjs",
+    "verify:auth": "node --no-warnings scripts/verify-auth.mjs",
+    "backup": "node --no-warnings scripts/backup.js",
+    "restore": "node --no-warnings scripts/restore.js",
+    "mock": "node --no-warnings scripts/mock-upstream.js",
+    "verify:refactor": "node --no-warnings scripts/verify-refactor.mjs",
+    "verify:analysis": "node --no-warnings scripts/verify-analysis.mjs",
+    "measure:nav": "node --no-warnings scripts/measure-nav.mjs",
+    "preflight": "node --no-warnings scripts/preflight.mjs",
+    "predeploy": "node --no-warnings scripts/preflight.mjs"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/multipart": "^9.0.3",
+    "@fastify/rate-limit": "^10.2.2",
+    "@fastify/static": "^10.1.10",
+    "fastify": "^5.2.1",
+    "fastify-plugin": "^5.1.0",
+    "undici": "^7.3.0"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^24.0.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/echopersona.git"
+  },
+  "keywords": [
+    "ai-persona",
+    "chat-analysis",
+    "llm",
+    "tts",
+    "wechat",
+    "fastify",
+    "sqlite",
+    "self-hosted"
+  ],
+  "author": "",
+  "optionalDependencies": {
+    "@tencent-ai/workbuddy-cloud-sdk": "^0.1.4-dev.ca27990.202610161713"
+  }
+}

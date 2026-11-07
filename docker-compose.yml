@@ -1,0 +1,50 @@
+# EchoPersona Docker Compose 部署
+#
+# 用法：
+#   1. cp .env.example .env 并填好 MASTER_KEY、PUBLIC_URL
+#   2. docker compose up -d --build
+#   3. docker compose logs -f web
+#
+# 说明：
+#   - 数据库/上传/音频/备份都在命名卷 ep-data 里，删容器不丢数据
+#   - 只绑定 127.0.0.1，公网访问由宿主机上的 Nginx 反代 + HTTPS 承担
+#   - SQLite 只支持单实例，因此不要给 web 服务加 replicas
+
+services:
+  web:
+    build: .
+    image: echopersona:1.0.0
+    container_name: echopersona
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      DATA_DIR: /data
+      NODE_ENV: production
+    ports:
+      # 只监听本机，避免绕过 Nginx 直接暴露
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ep-data:/data
+    # 资源上限，防止意外占满小内存 VPS
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  ep-data:
+    driver: local

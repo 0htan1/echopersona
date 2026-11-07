@@ -1,0 +1,59 @@
+[Unit]
+Description=EchoPersona - AI persona reconstruction & voice chat
+Documentation=https://github.com/your-org/echopersona
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 换成实际部署用户与目录
+User=echopersona
+Group=echopersona
+WorkingDirectory=/opt/echopersona
+
+# 环境变量来自 .env（由应用自己读取），这里只设置运行环境
+Environment=NODE_ENV=production
+EnvironmentFile=-/opt/echopersona/.env
+
+ExecStart=/usr/bin/node --no-warnings src/server.js
+
+# 自动重启
+Restart=always
+RestartSec=2
+# 连续 5 次 / 10 分钟内异常退出就停止重试，避免死循环打日志
+StartLimitBurst=5
+StartLimitIntervalSec=600
+
+# 优雅退出
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# ---- 安全加固 ----
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# 只允许写数据目录
+ReadWritePaths=/opt/echopersona/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+# Node 需要 mmap 与网络
+MemoryDenyWriteExecute=false
+PrivateDevices=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# ---- 资源限制 ----
+LimitNOFILE=65535
+MemoryMax=1G
+
+# ---- 日志 ----
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=echopersona
+
+[Install]
+WantedBy=multi-user.target

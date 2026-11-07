@@ -1,0 +1,54 @@
+# 依赖与构建产物
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# 运行时数据：数据库、上传、音频、备份、日志、开发密钥
+data/
+storage/
+.devkey
+.masterkey
+*.db
+*.db-wal
+*.db-shm
+*.db.gz
+*.before-restore
+
+# 环境变量与密钥
+.env
+.env.local
+.env.*.local
+
+# 测试与临时
+.tmp/
+coverage/
+*.log
+/tmp/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 备份目录
+backups/
+
+# 本地测试数据：绝不能随发布目录上传（含测试账号与会话密钥）
+.data-local-only/
+
+# 托管平台（发布为应用）生成的标记，含本机绝对路径与应用 ID
+.wbapp_*.genie
+.workbuddy/
+
+# 第三方浏览器 SDK 的搬运产物。
+# 它是 @tencent-ai/workbuddy-cloud-sdk 的编译结果，版权归上游，
+# 不该出现在本仓库（本项目是 MIT）。由 `npm run vendor`
+# （postinstall 会自动跑）从 node_modules 生成；依赖装不上时跳过，
+# 不影响邮箱登录等核心功能。
+public/vendor/
+
+# 验收脚本产物
+/screenshots/
+*.png
+!docs/**/*.png
