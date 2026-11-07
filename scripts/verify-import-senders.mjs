@@ -59,6 +59,19 @@ async function upload(personaId, filename, text, extra = {}) {
   });
   let json = null;
   try { json = JSON.parse(res.body); } catch { /* ignore */ }
+
+  /* 导入是后台 job（202 + jobId），必须等它跑完再断言。
+   * 只等状态码会把「已接收」错当成「已入库」，
+   * 后面的解析结果断言就会全部落空。 */
+  if (res.statusCode === 202 && json?.jobId) {
+    for (let i = 0; i < 300; i += 1) {
+      const j = await req('GET', `/api/jobs/${json.jobId}`);
+      const st = j.body?.job?.status;
+      if (st === 'done') { json = { ...json, ...j.body.job.result, job: j.body.job }; break; }
+      if (st === 'failed') { json = { ...json, error: j.body.job.error, job: j.body.job }; break; }
+      await new Promise((r) => setTimeout(r, 60));
+    }
+  }
   return { status: res.statusCode, body: json, raw: res.body };
 }
 
@@ -111,7 +124,8 @@ async function main() {
   ok('创建人格');
 
   let up = await upload(pid1, 'wechat.txt', WECHAT_TXT);
-  if (up.status !== 200) { bad('导入微信 TXT', `HTTP ${up.status} ${up.raw.slice(0, 200)}`); return finish(); }
+  if (up.status !== 202) { bad('导入微信 TXT', `HTTP ${up.status} ${up.raw.slice(0, 200)}`); return finish(); }
+  if (up.body.error) { bad('导入微信 TXT', `job 失败: ${up.body.error}`); return finish(); }
   ok('导入微信 TXT', `${up.body.added} 条`);
 
   let s = await req('GET', `/api/personas/${pid1}/senders`);
@@ -155,7 +169,8 @@ async function main() {
   ok('创建第二个人格', pid2 || '');
 
   up = await upload(pid2, 'copy.txt', PLAIN_TXT);
-  if (up.status !== 200) { bad('导入纯冒号 TXT', `HTTP ${up.status} ${up.raw.slice(0, 200)}`); return finish(); }
+  if (up.status !== 202) { bad('导入纯冒号 TXT', `HTTP ${up.status} ${up.raw.slice(0, 200)}`); return finish(); }
+  if (up.body.error) { bad('导入纯冒号 TXT', `job 失败: ${up.body.error}`); return finish(); }
   ok('导入纯冒号 TXT', `${up.body.added} 条`);
 
   s = await req('GET', `/api/personas/${pid2}/senders`);

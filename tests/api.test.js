@@ -206,6 +206,21 @@ test('create persona', async () => {
   assert.ok(personaId);
 });
 
+/* 导入已改为异步 job（立刻返回 202），测试必须等它真的完成再断言。
+ * 这个 helper 就是"等到 done 或 failed"，避免每个用例各写一遍轮询。 */
+async function waitJob(jobId, { timeoutMs = 30000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const r = await app.inject({ method: 'GET', url: `/api/jobs/${jobId}`, headers: { cookie } });
+    assert.equal(r.statusCode, 200, r.body);
+    const job = JSON.parse(r.body).job;
+    if (job.status === 'done') return job;
+    if (job.status === 'failed') throw new Error(`job failed: ${job.error}`);
+    await new Promise((res) => setTimeout(res, 40));
+  }
+  throw new Error(`job ${jobId} timeout`);
+}
+
 test('import TXT chat log and detect senders', async () => {
   const txt = `2024-03-12 21:04:33 林小满
 今天下班又是十点半，地铁上人还是好多。
@@ -233,10 +248,13 @@ test('import TXT chat log and detect senders', async () => {
     headers: { cookie, 'content-type': `multipart/form-data; boundary=${boundary}` },
     payload,
   });
-  assert.equal(res.statusCode, 200, res.body);
-  const body = JSON.parse(res.body);
-  assert.equal(body.added, 5);
-  assert.ok(body.senders.some((s) => s.name === '林小满' && s.role === 'persona'));
+  assert.equal(res.statusCode, 202, res.body);
+  const { jobId } = JSON.parse(res.body);
+  assert.ok(jobId, '导入应立刻返回 jobId，而不是同步处理完才响应');
+
+  const job = await waitJob(jobId);
+  assert.equal(job.result.added, 5);
+  assert.ok(job.result.senders.some((s) => s.name === '林小满' && s.role === 'persona'));
 });
 
 test('duplicate import is deduplicated', async () => {
@@ -252,9 +270,10 @@ test('duplicate import is deduplicated', async () => {
     headers: { cookie, 'content-type': `multipart/form-data; boundary=${boundary}` },
     payload,
   });
-  const body = JSON.parse(res.body);
-  assert.equal(body.added, 0);
-  assert.ok(body.duplicates >= 1);
+  assert.equal(res.statusCode, 202, res.body);
+  const job = await waitJob(JSON.parse(res.body).jobId);
+  assert.equal(job.result.added, 0);
+  assert.ok(job.result.duplicates >= 1);
 });
 
 test('人格详情里的导入记录用 camelCase 字段（导入后显示 null 的回归）', async () => {
@@ -280,7 +299,8 @@ test('人格详情里的导入记录用 camelCase 字段（导入后显示 null 
   assert.ok(!('message_total' in imp), 'imports 不应返回 snake_case 字段');
 });
 
-test('unsupported file format gives actionable error', async () => {  const boundary = '----badf';
+test('unsupported file format gives actionable error', async () => {
+  const boundary = '----badf';
   const payload = Buffer.concat([
     Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="wechat.db"\r\nContent-Type: application/octet-stream\r\n\r\n`),
     Buffer.from('binary junk'),
@@ -291,8 +311,12 @@ test('unsupported file format gives actionable error', async () => {  const boun
     headers: { cookie, 'content-type': `multipart/form-data; boundary=${boundary}` },
     payload,
   });
-  const body = JSON.parse(res.body);
-  assert.ok(body.imported[0].error.includes('不支持'));
+  assert.equal(res.statusCode, 202, res.body);
+  const job = await waitJob(JSON.parse(res.body).jobId);
+  // "不支持" 的错误现在在 job 结果的 imported[] 里，与同步时代位置一致
+  const failed = (job.result.imported || []).filter((x) => x.error);
+  assert.ok(failed.length > 0, `应有一个文件失败，实际：${JSON.stringify(job.result)}`);
+  assert.ok(failed[0].error.includes('不支持'), failed[0].error);
 });
 
 test('style stats reflect imported persona lines', async () => {

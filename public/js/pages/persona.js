@@ -477,21 +477,78 @@ async function renderImportTab(id, data) {
     const bar = progress.querySelector('i');
     const lbl = progress.querySelector('.tiny');
     lbl.textContent = '上传中…';
+
+    let r;
     try {
-      const r = await api.form(`/api/personas/${id}/imports`, fd, {
+      r = await api.form(`/api/personas/${id}/imports`, fd, {
         onProgress: (p) => {
-          bar.style.width = `${Math.round(p * 90)}%`;
+          bar.style.width = `${Math.round(p * 60)}%`;
           lbl.textContent = `上传中 ${Math.round(p * 100)}%`;
         },
       });
+    } catch (e) {
+      progress.classList.add('hidden');
+      toast(e.message, 'err');
+      return;
+    }
+
+    /* 服务端现在立刻返回 202 + jobId，真正的解析与入库在后台跑。
+     * 上传只占整个进度的前 60%，剩下 40% 用来展示服务端处理进度 ——
+     * 因为上传完成不等于导入完成，把两者混成一条进度条会让人以为已经好了。 */
+    if (!r.jobId) {
+      // 兼容旧返回（同步完成）
       bar.style.width = '100%';
       lbl.textContent = r.message;
       toast(r.message, r.added > 0 ? 'ok' : '');
       setTimeout(() => navigate(`/app/personas/${id}/import`), 700);
-    } catch (e) {
-      progress.classList.add('hidden');
-      toast(e.message, 'err');
+      return;
     }
+
+    const startedAt = Date.now();
+    const TIMEOUT_MS = 15 * 60 * 1000;
+    let fails = 0;
+    let stopped = false;
+
+    const stop = () => { stopped = true; clearInterval(poll); };
+
+    const poll = setInterval(async () => {
+      if (stopped) return;
+      if (Date.now() - startedAt > TIMEOUT_MS) {
+        stop();
+        progress.classList.add('hidden');
+        toast('导入超时，请稍后刷新页面查看结果', 'err');
+        return;
+      }
+      try {
+        const j = await api.get(`/api/jobs/${r.jobId}`);
+        fails = 0;
+        const job = j.job || {};
+        const pct = 60 + Math.round((job.progress || 0) * 40);
+        bar.style.width = `${Math.min(pct, 100)}%`;
+        if (job.stage) lbl.textContent = job.stage;
+
+        if (job.status === 'done') {
+          stop();
+          bar.style.width = '100%';
+          const res = job.result || {};
+          lbl.textContent = res.message || '导入完成';
+          toast(res.message || '导入完成', (res.added || 0) > 0 ? 'ok' : '');
+          setTimeout(() => navigate(`/app/personas/${id}/import`), 800);
+        } else if (job.status === 'failed') {
+          stop();
+          progress.classList.add('hidden');
+          toast(`导入失败：${job.error || '未知错误'}`, 'err');
+        }
+      } catch (e) {
+        fails += 1;
+        lbl.textContent = `读取进度失败（第 ${fails} 次），正在重试…`;
+        if (fails >= 5) {
+          stop();
+          progress.classList.add('hidden');
+          toast(`无法读取导入进度：${e.message}`, 'err');
+        }
+      }
+    }, 1000);
   };
 
   // 用 h() 而不是原生 append()：原生 append() 会把 null/undefined 当成文本节点
@@ -610,9 +667,12 @@ function previewResult(id, r, senderSel, pending, onDone) {
                 const fd = new FormData();
                 for (const f of pending) fd.append('files', f, f.name);
                 if (senderSel.value) fd.append('personaSender', senderSel.value);
+                /* 服务端改为异步 job：立刻返回 202 + jobId。
+                 * 这里不阻塞等待入库完成，直接告诉用户「已开始」并跳到导入记录页，
+                 * 那里能看到「解析中」状态，完成后自动变成完成 —— 用户不用盯着转圈。 */
                 try {
                   const res = await api.form(`/api/personas/${id}/imports`, fd);
-                  toast(res.message, 'ok');
+                  toast(res.async ? '已开始导入，可在列表中查看进度' : (res.message || '导入完成'), 'ok');
                   setTimeout(() => navigate(`/app/personas/${id}/import`), 600);
                 } catch (e) { toast(e.message, 'err'); }
               },

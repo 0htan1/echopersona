@@ -168,12 +168,34 @@ async function main() {
   const form = new FormData();
   form.append('file', new Blob([chatTxt], { type: 'text/plain' }), 'wechat.txt');
   form.append('senderMap', JSON.stringify({ 林小满: 'persona', 我: 'user' }));
+
+  /* 导入已改成后台 job（立刻 202 + jobId）。这里不能只看状态码就断言成功 ——
+   * 202 只代表"已接收"，解析和入库还在后面跑。必须等 job 结束，
+   * 否则紧接着的 analyze 会对着一个空人格跑，报"没有可分析的内容"。 */
+  const waitJobEarly = async (jobId) => {
+    for (let i = 0; i < 300; i += 1) {
+      const j = await req('GET', `/api/jobs/${jobId}`);
+      const st = j.body?.job?.status;
+      if (st === 'done' || st === 'failed') return j.body.job;
+      await new Promise((res) => setTimeout(res, 100));
+    }
+    return null;
+  };
+
   const mp = await app.inject({
     method: 'POST', url: `/api/personas/${personaId}/imports`,
     headers: { cookie }, payload: form,
   });
-  if (mp.statusCode === 200) ok('导入聊天记录');
-  else bad('导入聊天记录', `HTTP ${mp.statusCode} ${mp.body.slice(0, 160)}`);
+  if (mp.statusCode === 202) {
+    const job = await waitJobEarly(JSON.parse(mp.body).jobId);
+    if (job?.status === 'done' && (job.result?.added || 0) > 0) {
+      ok('导入聊天记录', `新增 ${job.result.added} 条`);
+    } else {
+      bad('导入聊天记录', `job ${job?.status}: ${String(job?.error || '').slice(0, 160)}`);
+    }
+  } else {
+    bad('导入聊天记录', `HTTP ${mp.statusCode} ${mp.body.slice(0, 160)}`);
+  }
 
   /* 关键：上游给畸形 JSON，接口必须靠自动修复跑成功。
    * 分析是异步任务（202 + jobId），必须等 job 结束再看结果 ——

@@ -58,9 +58,19 @@ export async function buildServer({ logger = true } = {}) {
     // 只有确实部署在反向代理后面时才信任 X-Forwarded-For。
     // 无条件 true 会让任何客户端伪造 IP 绕过限流与审计。
     trustProxy: config.trustProxy,
-    bodyLimit: 2 * 1024 * 1024,
+    /* bodyLimit 只管「非 multipart」的 JSON 请求体，所以 2MB 够用。
+     * 但不要再指望它给上传兜底：文件走 @fastify/multipart，限制在下面的
+     * fileSize 里单独设。
+     *
+     * 这里曾经写死 2MB，而 MAX_UPLOAD_MB 默认 50 —— 结果是 3MB 的聊天记录
+     * 上传直接 413，报「请求体过大」，用户完全想不到是 bodyLimit 干的。
+     * 现在按上传上限放开，让 multipart 自己按文件逐个判断。 */
+    bodyLimit: Math.max(2 * 1024 * 1024, config.maxUploadBytes + 1024 * 1024),
     disableRequestLogging: config.isProd,
-    requestTimeout: 300000,
+    /* 单请求最长 60 秒。导入已改成后台 job（立刻返回 202），
+     * 长耗时工作不再占着 HTTP 连接，所以这里不需要 5 分钟的宽限 ——
+     * 让真正的慢请求尽早失败，别把连接池耗光。 */
+    requestTimeout: 60000,
     connectionTimeout: 30000,
   });
 

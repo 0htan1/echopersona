@@ -227,11 +227,28 @@ export async function newPersonaPage() {
   const err = h('div.tiny', { style: { color: 'var(--danger)', minHeight: '1.2em' } });
   const btn = h('button.btn.btn-copper.btn-lg', { type: 'submit' }, '创建并继续');
 
-  const llms = await api.get('/api/llm-configs').then((r) => r.configs).catch(() => []);
-  const llmSel = h('select', {},
-    h('option', { value: '' }, llms.length ? '使用默认配置' : '（尚未配置大模型）'),
-    ...llms.map((c) => h('option', { value: c.id }, `${c.label} · ${c.model}`))
-  );
+  /* 先把表单画出来，模型列表稍后再填。
+   *
+   * 这里原本是 `const llms = await api.get(...)` —— 整个页面（包括输入框）
+   * 都要等这一个接口回来才出现。而这个下拉框对"开始填写昵称"毫无帮助，
+   * 却让首屏凭空多了 100~200ms 的白屏。现在只要一个占位就够，
+   * 数据到了再替换选项。 */
+  const llmSel = h('select', {}, h('option', { value: '' }, '加载中…'));
+  /* 提示语对象单独留个引用：模型列表回来之后要按「有没有配过」改写文案。
+   * 不这么做的话，新用户永远看不到「请先去配置 API Key」这句最关键的引导。 */
+  const llmHint = h('div.hint', { text: '每个人格可以独立选择模型，例如分析用强模型、日常聊天用便宜模型。' });
+  api.get('/api/llm-configs')
+    .then((r) => r.configs)
+    .catch(() => [])
+    .then((llms) => {
+      llmSel.replaceChildren(
+        h('option', { value: '' }, llms.length ? '使用默认配置' : '（尚未配置大模型）'),
+        ...llms.map((c) => h('option', { value: c.id }, `${c.label} · ${c.model}`))
+      );
+      if (!llms.length) {
+        llmHint.textContent = '还没有配置大模型。可以先创建人格，之后到「API 配置」补充。';
+      }
+    });
 
   const form = h('form', {
     onsubmit: async (e) => {
@@ -285,11 +302,7 @@ export async function newPersonaPage() {
         ),
         h('div.field.full',
           h('label', { text: '使用的大模型' }), llmSel,
-          h('div.hint', {
-            text: llms.length
-              ? '每个人格可以独立选择模型，例如分析用强模型、日常聊天用便宜模型。'
-              : '还没有配置大模型。可以先创建人格，之后到「API 配置」补充。',
-          })
+          llmHint
         )
       )
     ),

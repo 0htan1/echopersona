@@ -183,12 +183,21 @@ async function main() {
     const im = await app.inject({
       method: 'POST', url: `/api/personas/${pid}/imports`, headers: { cookie }, payload: fd2,
     });
-    if (im.statusCode === 200) {
-      let b = null; try { b = JSON.parse(im.body); } catch { /* ignore */ }
-      ok('导入入库', `新增 ${b?.inserted ?? b?.totalNew ?? '?'} 条`);
-    } else {
-      bad('导入入库', `HTTP ${im.statusCode} ${im.body.slice(0, 300)}`);
+    /* 导入已改成后台 job：202 + jobId。必须等到 done 再往下走，
+     * 否则后面读 style-stats 会拿到空人格，断言失败看起来像"统计坏了"。 */
+    let b = null; try { b = JSON.parse(im.body); } catch { /* ignore */ }
+    if (im.statusCode === 202 && b?.jobId) {
+      for (let i = 0; i < 300; i += 1) {
+        const j = await req('GET', `/api/jobs/${b.jobId}`);
+        const st = j.body?.job?.status;
+        if (st === 'done') { b = j.body.job.result; break; }
+        if (st === 'failed') { b = { error: j.body.job.error }; break; }
+        await new Promise((r) => setTimeout(r, 60));
+      }
     }
+    if (b?.error) bad('导入入库', `job 失败: ${b.error}`);
+    else if (im.statusCode === 202 || im.statusCode === 200) ok('导入入库', `新增 ${b?.added ?? b?.inserted ?? '?'} 条`);
+    else bad('导入入库', `HTTP ${im.statusCode} ${im.body.slice(0, 300)}`);
   }
 
   r = await req('GET', `/api/personas/${pid}/style-stats`);

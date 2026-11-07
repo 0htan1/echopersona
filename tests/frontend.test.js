@@ -346,8 +346,21 @@ before(async () => {
     body: payload,
   });
   const impBody = await imp.json();
-  assert.equal(imp.status, 200, `导入失败: ${JSON.stringify(impBody)}`);
-  assert.ok(impBody.added >= 2, '导入应该写入至少两条消息');
+  /* 导入已改为异步 job：立刻返回 202 + jobId，解析与入库在后台跑。
+   * 这里必须真的等到 job 完成，否则后续页面渲染拿到的是空人格，
+   * 测试会以"页面没有内容"的形式失败，看起来像前端 bug，其实是时序问题。 */
+  assert.equal(imp.status, 202, `导入启动失败: ${JSON.stringify(impBody)}`);
+  assert.ok(impBody.jobId, '导入应返回 jobId');
+  let importDone = null;
+  for (let i = 0; i < 300; i++) {
+    await new Promise((r) => setTimeout(r, 60));
+    const j = await get(`/api/jobs/${impBody.jobId}`);
+    const st = j.body?.job?.status;
+    if (st === 'done') { importDone = j.body.job; break; }
+    assert.notEqual(st, 'failed', `导入失败: ${j.body?.job?.error}`);
+  }
+  assert.ok(importDone, '导入超时未完成');
+  assert.ok((importDone.result?.added || 0) >= 2, '导入应该写入至少两条消息');
 
   const an = await post(`/api/personas/${personaId}/analyze`);
   assert.equal(an.status, 202, `分析启动失败: ${JSON.stringify(an.body)}`);
