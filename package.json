@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node --no-warnings src/server.js",
-    "dev": "node --no-warnings --watch src/server.js",
+    "dev": "node --no-warnings scripts/dev-start.mjs",
     "migrate": "node --no-warnings scripts/migrate.js",
     "vendor": "node --no-warnings scripts/build-vendor.mjs",
     "postinstall": "node --no-warnings scripts/build-vendor.mjs",

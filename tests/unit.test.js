@@ -14,7 +14,8 @@ import {
 } from '../src/lib/persona.js';
 import { encryptSecret, decryptSecret, hashPassword, verifyPassword, maskSecret } from '../src/lib/crypto.js';
 import { isPrivateIp, validateUpstreamUrl } from '../src/lib/net.js';
-import { decideSpeak, decideSpeakUpfront, ttsReady, normalizeVoiceMode } from '../src/lib/voice-mode.js';
+import { decideSpeak, decideSpeakUpfront, ttsReady, normalizeVoiceMode, sanitizeSpokenText } from '../src/lib/voice-mode.js';
+import { splitIntoMessages, MAX_BUBBLES } from '../src/lib/split-messages.js';
 
 /* ---------------------------------------------------------- parsers */
 test('TXT: WeChat "date time speaker" on its own line', () => {
@@ -635,4 +636,71 @@ test('TXT: 语音转写与时长写在同一行时仍认得出转写', () => {
   // 时长不能被当成内容，也不能把别人的话并进她的语音
   assert.ok(!voices[0].content.includes('12'));
   assert.ok(!voices[0].content.includes('在加班'));
+});
+
+/* ------------------------------------------- 多条消息拆分 / TTS 优化 */
+
+test('拆分：用 ||| 分隔的多条回复拆成独立消息', () => {
+  const out = splitIntoMessages('刚到家|||累死了|||你吃了吗');
+  assert.deepEqual(out, ['刚到家', '累死了', '你吃了吗']);
+});
+
+test('拆分：没有分隔符就只返回一条', () => {
+  assert.deepEqual(splitIntoMessages('在的'), ['在的']);
+  assert.deepEqual(splitIntoMessages('今天有点忙，晚点聊'), ['今天有点忙，晚点聊']);
+});
+
+test('拆分：分隔符写坏了也能认（|||、|| 、| | |）', () => {
+  assert.deepEqual(splitIntoMessages('嗯||好'), ['嗯', '好']);
+  assert.deepEqual(splitIntoMessages('嗯 | | | 好'), ['嗯', '好']);
+});
+
+test('拆分：空输入返回空数组', () => {
+  assert.deepEqual(splitIntoMessages(''), []);
+  assert.deepEqual(splitIntoMessages('   '), []);
+});
+
+test('拆分：短行多行（无分隔符）按行拆，但长段落不拆', () => {
+  assert.deepEqual(splitIntoMessages('在吗\n嗯\n怎么了'), ['在吗', '嗯', '怎么了']);
+  // 长行是正常排版，不能当成多条
+  const long = '这个事我想了一下，' + '其实也不算什么大问题，'.repeat(6);
+  assert.equal(splitIntoMessages(long).length, 1);
+});
+
+test('拆分：超过 5 条会被截断，不会刷屏', () => {
+  const out = splitIntoMessages('1|||2|||3|||4|||5|||6|||7');
+  assert.equal(out.length, MAX_BUBBLES);
+});
+
+test('拆分：单条超长会按语义边界再切，且不丢内容', () => {
+  const long = '这句话我要说很长很长。'.repeat(30);
+  const out = splitIntoMessages(long);
+  assert.ok(out.length > 1);
+  // 切完拼回去（去掉分隔）内容不丢
+  assert.equal(out.join('').replace(/\s/g, ''), long.replace(/\s/g, ''));
+});
+
+test('TTS：标点要保留（引擎靠它判断停顿），不能全删', () => {
+  const out = sanitizeSpokenText('我本来想，算了。那就这样吧');
+  assert.ok(out.includes('，'), '逗号必须保留，否则会一口气连读');
+  assert.ok(out.includes('。'), '句号必须保留');
+});
+
+test('TTS：念不出来的符号要去掉', () => {
+  const out = sanitizeSpokenText('他说“你好”然后《走了》～');
+  assert.ok(!out.includes('“'));
+  assert.ok(!out.includes('《'));
+  assert.ok(!out.includes('～'));
+});
+
+test('TTS：连续标点收敛成一个，避免拖长音', () => {
+  assert.equal(sanitizeSpokenText('真的吗！！！'), '真的吗！');
+});
+
+test('TTS：省略号和破折号归一成句号（引擎只认标准标点）', () => {
+  assert.equal(sanitizeSpokenText('我想想……算了'), '我想想。算了');
+});
+
+test('TTS：分号冒号归一成逗号', () => {
+  assert.equal(sanitizeSpokenText('两件事：吃饭；睡觉'), '两件事，吃饭，睡觉');
 });

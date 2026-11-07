@@ -697,7 +697,11 @@ export async function chatPage(personaId, chatId = null) {
               firstChunk = false;
             }
             acc += ev.text;
-            bubble.innerHTML = md(acc);
+            /* 流式期间把 `|||` 显示成分行。
+             * 它是服务端用的多条分隔符，不该让用户看到这三个竖线；
+             * 而生成过程中还无法确定要不要拆，所以先按换行显示，
+             * 收到 done 再重绘成真正的多个气泡。 */
+            bubble.innerHTML = md(acc.replace(/\|{2,}\s*\|{0,}/g, '\n'));
             const nearBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 180;
             if (nearBottom) scrollBottom();
           } else if (ev.type === 'speaking') {
@@ -722,15 +726,27 @@ export async function chatPage(personaId, chatId = null) {
             throw new Error(ev.message);
           } else if (ev.type === 'done') {
             meta.textContent = fmtTime(Date.now());
-            messages.push({
-              id: ev.messageId, role: 'persona',
-              // 语音消息的 content 是"转文字"要看的内容，服务端会一起给
-              content: ev.content ?? acc,
-              createdAt: Date.now(),
-              hasAudio: !!ev.audioUrl,
-              audioUrl: ev.audioUrl || null,
-              mock: !!ev.mock,
-            });
+            /* 多条气泡：服务端把回复拆好了，这里逐条 push，
+             * 每条渲染成一个独立气泡 —— 刷新页面后仍然是几条，
+             * 因为它们各自是独立的 messages 记录。 */
+            if (Array.isArray(ev.bubbles) && ev.bubbles.length > 1) {
+              for (const b of ev.bubbles) {
+                messages.push({
+                  id: b.id, role: 'persona', content: b.content,
+                  createdAt: Date.now(), hasAudio: false, audioUrl: null, mock: !!ev.mock,
+                });
+              }
+            } else {
+              messages.push({
+                id: ev.messageId, role: 'persona',
+                // 语音消息的 content 是"转文字"要看的内容，服务端会一起给
+                content: ev.content ?? acc,
+                createdAt: Date.now(),
+                hasAudio: !!ev.audioUrl,
+                audioUrl: ev.audioUrl || null,
+                mock: !!ev.mock,
+              });
+            }
             if (ev.aborted) toast('已停止生成');
             if (ev.mock) toast('当前为模拟上游返回的示例回复，非真实模型输出');
             renderThread();

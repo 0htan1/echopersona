@@ -8,6 +8,7 @@ import { buildSystemPrompt, buildChatMessages, pickStyleSamples, renderStyleSamp
 import { safeJson, loadTts } from './configs.js';
 import { normalizeVoiceMode, decideSpeakUpfront, ttsReady, sanitizeSpokenText } from '../lib/voice-mode.js';
 import { synthesizeToFile } from '../lib/tts-service.js';
+import { splitIntoMessages } from '../lib/split-messages.js';
 
 /* 从库里取历史消息的条数天花板。
  *
@@ -303,28 +304,49 @@ export default async function chatRoutes(app) {
 
     const aborted = ac.signal.aborted;
     if (acc.trim()) {
-      const seq = (get('SELECT MAX(seq) s FROM messages WHERE chat_id = ?', [chat.id])?.s || 0) + 1;
+      const decision = { speak: speaking, reason: speakDecision.reason };
 
       /* 语音模式：把模型输出洗成"能被念出来"的样子。
        * 即使提示词已经把要求写死了，模型偶尔还是会带括号动作或 emoji，
        * 所以这里兜一道。清洗只去噪声，不改意思 —— 转文字时用户看到的
        * 仍然是他听到的内容。 */
       const finalText = speaking ? sanitizeSpokenText(acc) : acc;
-      const decision = { speak: speaking, reason: speakDecision.reason };
 
-      run(`INSERT INTO messages (id,user_id,persona_id,chat_id,role,sender_raw,content,msg_type,ts,seq,is_imported,
-             meta_json,created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?)`,
-        [assistantId, req.user.id, p.id, chat.id, 'persona', p.name, finalText,
-          speaking ? 'text' : 'text',   // 先记 text，合成成功后再改 audio
-          Date.now(), seq,
-          JSON.stringify({
-            mode, model: llm.model, ms: Date.now() - started, aborted,
-            recalled: recall.memories.length, voiceMode, speak: decision.speak,
-            samples: sampleStats,
-          }), Date.now()]);
+      /* 拆成「连着发的几条消息」。
+       *
+       * 语音模式不拆：一条语音就是一条，拆开等于连发好几条语音，
+       * 真人不会这么干（连发语音会在对方那里连响好几声，很打扰）。
+       * 所以拆分只对文字回复生效。 */
+      const bubbles = speaking ? [finalText] : splitIntoMessages(finalText);
+
+      const baseSeq = (get('SELECT MAX(seq) s FROM messages WHERE chat_id = ?', [chat.id])?.s || 0);
+      const meta = JSON.stringify({
+        mode, model: llm.model, ms: Date.now() - started, aborted,
+        recalled: recall.memories.length, voiceMode, speak: decision.speak,
+        samples: sampleStats,
+      });
+
+      /* 每条气泡各自一条 messages 记录 —— 前端渲染时就是几个独立气泡，
+       * 刷新页面后仍然是几条（不能只在前端假装拆开，那样刷新就变回一条）。
+       *
+       * seq 必须连续递增，否则同一毫秒内的多条消息顺序会乱：
+       * 排序用的是 (created_at, seq)，created_at 相同时全靠 seq 决定先后。 */
+      const bubbleIds = [];
+      const now = Date.now();
+      for (let i = 0; i < bubbles.length; i += 1) {
+        const bid = i === 0 ? assistantId : `msg_${crypto.randomUUID()}`;
+        bubbleIds.push(bid);
+        run(`INSERT INTO messages (id,user_id,persona_id,chat_id,role,sender_raw,content,msg_type,ts,seq,is_imported,
+               meta_json,created_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?)`,
+          [bid, req.user.id, p.id, chat.id, 'persona', p.name, bubbles[i],
+            'text',   // 先记 text，合成成功后再改 audio
+            now, baseSeq + 1 + i, meta, now]);
+      }
       run('UPDATE chats SET updated_at = ? WHERE id = ?', [Date.now(), chat.id]);
-      audit(req.user.id, 'chat.send', { target: p.id, ip: req.ip, meta: { chars: finalText.length, spoke: speaking } });
+      audit(req.user.id, 'chat.send', {
+        target: p.id, ip: req.ip, meta: { chars: finalText.length, spoke: speaking, bubbles: bubbles.length },
+      });
 
       /* 语音模式下立刻合成，并把结果放进 done 事件里。
        * 不交给前端再发一次 /api/tts：那样用户会先看到一个"语音条正在生成"
@@ -348,7 +370,14 @@ export default async function chatRoutes(app) {
       }
 
       send({
-        type: 'done', messageId: assistantId, aborted, chars: finalText.length,
+        type: 'done', messageId: assistantId,
+        /* 多条气泡时前端要逐个画出来。bubbles 是权威来源：
+         * 老前端只认 messageId + content，所以下面两个字段仍按单条返回，
+         * 保持向后兼容（不会因为前端没更新就白屏）。 */
+        bubbles: bubbles.length > 1
+          ? bubbles.map((t, i) => ({ id: bubbleIds[i], content: t }))
+          : undefined,
+        aborted, chars: finalText.length,
         ms: Date.now() - started, mock: !!isMock,
         speak: decision.speak, speakReason: decision.reason, voiceMode,
         // 语音模式下 content 仍要回传（用于「转文字」按钮），但前端不把它画成文字气泡
